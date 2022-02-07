@@ -1,7 +1,7 @@
 use std::{env, fs};
 use std::path::{Path, PathBuf};
 use std::io::{BufReader, BufWriter, Error, ErrorKind};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use serde::{Serialize, Deserialize};
 
 #[derive(Deserialize, Debug)]
@@ -102,7 +102,7 @@ impl<T> ToDocker for Vec<T> where T: ToDocker {
     }
 }
 
-impl ToDocker for HashMap<String, DockerService> {
+impl ToDocker for BTreeMap<String, DockerService> {
     type Output = DockerCompose;
     fn to_docker(&self) -> DockerCompose {
         DockerCompose {
@@ -115,7 +115,7 @@ impl ToDocker for HashMap<String, DockerService> {
 #[derive(Serialize, Debug)]
 struct DockerCompose {
     version: String,
-    services: HashMap<String, DockerService>,
+    services: BTreeMap<String, DockerService>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -182,7 +182,7 @@ fn main() -> Result<(), std::io::Error> {
 
     let docker_config = configs.iter()
                                .map(|c| c.to_docker())
-                               .collect::<HashMap<String, DockerService>>()
+                               .collect::<BTreeMap<String, DockerService>>()
                                .to_docker();
 
     let output_file_name = "docker-compose.yml".to_string();
