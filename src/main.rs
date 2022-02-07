@@ -1,13 +1,8 @@
-use std::io;
-use std::env;
-use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
-use serde::{Serialize, Deserialize};
-use std::fs::File;
-use std::io::BufReader;
-use std::io::BufWriter;
+use std::{env, fs};
+use std::path::{Path, PathBuf};
+use std::io::{BufReader, BufWriter, Error, ErrorKind};
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
 #[derive(Deserialize, Debug)]
 struct SynoContainerConfig {
@@ -85,7 +80,7 @@ struct SynoContainerEnvVariable {
 
 impl SynoContainerEnvVariable {
     fn docker(&self) -> String {
-        format!("{}={}", self.key, self.value,)
+        format!("{}={}", self.key, self.value)
     }
 }
 
@@ -123,7 +118,7 @@ fn is_syno_docker_json_file(path: &Path) -> bool {
     file_name.ends_with(".syno.json")
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<(), std::io::Error> {
     let args: Vec<String> = env::args().collect();
 
     let input_path = &args[1];
@@ -132,42 +127,47 @@ fn main() -> io::Result<()> {
     println!("Finding syno.json files in {}", input_path);
 
     let path = Path::new(input_path);
-    if path.is_dir() {
-        println!("Found:");
-
-        let entries = fs::read_dir(path).unwrap()
-            .map(|p| p.unwrap().path())
-            .filter(|p| is_syno_docker_json_file(p.as_ref()))
-            .collect::<Vec<PathBuf>>();
-
-        for item in &entries {
-            println!("\t{:?}", item);
-        }
-
-        let configs = entries.iter().map(|p| {
-            let file = File::open(p).unwrap();
-            let reader = BufReader::new(file);
-            let config: SynoContainerConfig = serde_json::from_reader(reader).unwrap();
-            config
-        }).collect::<Vec<SynoContainerConfig>>();
-
-        let services = configs.iter()
-                              .map(|c| c.docker())
-                              .collect::<HashMap<String, DockerService>>();
-
-        let docker_config = DockerCompose {
-            version: "3.9".to_string(),
-            services: services,
-        };
-
-        let output_file_name = "docker-compose.yml".to_string();
-        let output_path = Path::new(output_path).join(output_file_name);
-        println!("Outputing docker-compose.yml to {:?}", output_path);
-
-        let output_file = File::create(output_path).unwrap();
-        let writer = BufWriter::new(output_file);
-        serde_yaml::to_writer(writer, &docker_config);
+    if !path.is_dir() {
+        return Err(Error::new(ErrorKind::Other, format!("{:?} is not a directory", path)));
     }
 
-    Ok(())
+    let entries = fs::read_dir(path).unwrap()
+        .map(|p| p.unwrap().path())
+        .filter(|p| is_syno_docker_json_file(p.as_ref()))
+        .collect::<Vec<PathBuf>>();
+
+    if entries.len() == 0 {
+        return Err(Error::new(ErrorKind::NotFound, format!("{:?} contains no syno docker json files", path)));
+    }
+
+    println!("Found:");
+    for item in &entries {
+        println!("\t{:?}", item);
+    }
+
+    let configs = entries.iter().map(|p| {
+        let file = fs::File::open(p).unwrap();
+        let reader = BufReader::new(file);
+        let config: SynoContainerConfig = serde_json::from_reader(reader).unwrap();
+        config
+    }).collect::<Vec<SynoContainerConfig>>();
+
+    let services = configs.iter()
+                          .map(|c| c.docker())
+                          .collect::<HashMap<String, DockerService>>();
+
+    let docker_config = DockerCompose {
+        version: "3.9".to_string(),
+        services: services,
+    };
+
+    let output_file_name = "docker-compose.yml".to_string();
+    let output_path = Path::new(output_path).join(output_file_name);
+    println!("Outputing docker-compose.yml to {:?}", output_path);
+
+    let output_file = fs::File::create(output_path).unwrap();
+    let writer = BufWriter::new(output_file);
+
+    serde_yaml::to_writer(writer, &docker_config)
+        .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))
 }
