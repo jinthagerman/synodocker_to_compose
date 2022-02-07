@@ -14,17 +14,24 @@ struct SynoContainerConfig {
     env_variables: Vec<SynoContainerEnvVariable>
 }
 
-impl SynoContainerConfig {
-    fn docker(&self) -> (String, DockerService) {
+impl ToDocker for SynoContainerConfig {
+    type Output = (String, DockerService);
+    fn to_docker(&self) -> (String, DockerService) {
         let service = DockerService {
             image: self.image.clone(),
-            depends_on: self.links.iter().map(|i| i.docker()).collect(),
-            ports: self.port_bindings.iter().map(|i| i.docker()).collect(),
-            volumes: self.volume_bindings.iter().map(|i| i.docker()).collect(),
-            environment: self.env_variables.iter().map(|i| i.docker()).collect(),
+            depends_on: self.links.to_docker(),
+            ports: self.port_bindings.to_docker(),
+            volumes: self.volume_bindings.to_docker(),
+            environment: self.env_variables.to_docker(),
         };
         (self.name.clone(), service)
     }
+}
+
+trait ToDocker {
+    type Output;
+
+    fn to_docker(&self) -> Self::Output;
 }
 
 #[derive(Deserialize, Debug)]
@@ -33,8 +40,9 @@ struct SynoContainerLink {
     link_container: String,
 }
 
-impl SynoContainerLink {
-    fn docker(&self) -> String {
+impl ToDocker for SynoContainerLink {
+    type Output = String;
+    fn to_docker(&self) -> String {
         self.link_container.clone()
     }
 }
@@ -47,8 +55,9 @@ struct SynoContainerPortBinding {
     port_type: String,
 }
 
-impl SynoContainerPortBinding {
-    fn docker(&self) -> DockerPort {
+impl ToDocker for SynoContainerPortBinding {
+    type Output = DockerPort;
+    fn to_docker(&self) -> DockerPort {
         DockerPort {
             target: self.container_port,
             published: self.host_port,
@@ -66,8 +75,9 @@ struct SynoContainerVolumeBinding {
     volume_type: String,
 }
 
-impl SynoContainerVolumeBinding {
-    fn docker(&self) -> String {
+impl ToDocker for SynoContainerVolumeBinding {
+    type Output = String;
+    fn to_docker(&self) -> String {
         format!("{}:{}:{}", self.mount_point, self.host_volume_file, self.volume_type)
     }
 }
@@ -78,9 +88,27 @@ struct SynoContainerEnvVariable {
     value: String,
 }
 
-impl SynoContainerEnvVariable {
-    fn docker(&self) -> String {
+impl ToDocker for SynoContainerEnvVariable {
+    type Output = String;
+    fn to_docker(&self) -> String {
         format!("{}={}", self.key, self.value)
+    }
+}
+
+impl<T> ToDocker for Vec<T> where T: ToDocker {
+    type Output = Vec<T::Output>;
+    fn to_docker(&self) -> Self::Output {
+        self.iter().map(|i| i.to_docker()).collect()
+    }
+}
+
+impl ToDocker for HashMap<String, DockerService> {
+    type Output = DockerCompose;
+    fn to_docker(&self) -> DockerCompose {
+        DockerCompose {
+            version: "3.9".to_string(),
+            services: (*self).clone(),
+        }
     }
 }
 
@@ -90,7 +118,7 @@ struct DockerCompose {
     services: HashMap<String, DockerService>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Clone, Debug)]
 struct DockerService {
     image: String,
     depends_on: Vec<String>,
@@ -99,7 +127,7 @@ struct DockerService {
     environment: Vec<String>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Clone, Debug)]
 struct DockerPort {
     target: i32,
     published: i32,
@@ -152,14 +180,10 @@ fn main() -> Result<(), std::io::Error> {
         config
     }).collect::<Vec<SynoContainerConfig>>();
 
-    let services = configs.iter()
-                          .map(|c| c.docker())
-                          .collect::<HashMap<String, DockerService>>();
-
-    let docker_config = DockerCompose {
-        version: "3.9".to_string(),
-        services: services,
-    };
+    let docker_config = configs.iter()
+                               .map(|c| c.to_docker())
+                               .collect::<HashMap<String, DockerService>>()
+                               .to_docker();
 
     let output_file_name = "docker-compose.yml".to_string();
     let output_path = Path::new(output_path).join(output_file_name);
